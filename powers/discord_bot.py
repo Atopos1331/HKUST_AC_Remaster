@@ -8,6 +8,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
+from powers.command_registry import CommandSpec, iter_command_specs
 from powers.message_handler import BotMessageHandler, BotResponse
 from powers.utils.config import Bot
 from powers.utils.logger import log
@@ -104,102 +105,61 @@ class DiscordBot:
                         log.error(f"Failed to handle Discord message: {exc}")
 
                 def _register_commands(self) -> None:
-                    specs = {spec["name"]: spec for spec in self.bot_instance.message_handler.get_discord_command_specs()}
+                    for spec in iter_command_specs():
+                        callback = self._build_slash_callback(spec)
+                        command = app_commands.Command(
+                            name=spec.name,
+                            description=spec.description,
+                            callback=callback,
+                        )
+                        self.tree.add_command(command, override=True)
 
-                    @self.tree.command(name="state", description=specs["state"]["description"])
-                    async def state(interaction: discord.Interaction) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message("/state", source="discord-slash"))
-
-                    @self.tree.command(name="settemp", description=specs["settemp"]["description"])
-                    @app_commands.describe(temperature=specs["settemp"]["options"]["temperature"])
-                    async def settemp(interaction: discord.Interaction, temperature: float) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message(f"/settemp {temperature}", source="discord-slash"))
-
-                    @self.tree.command(name="setbasis", description=specs["setbasis"]["description"])
-                    @app_commands.describe(basis=specs["setbasis"]["options"]["basis"])
-                    @app_commands.choices(
-                        basis=[
-                            app_commands.Choice(name="temperature", value="temperature"),
-                            app_commands.Choice(name="heatindex", value="heatindex"),
-                        ]
+                def _build_slash_callback(self, spec: CommandSpec):
+                    parameters = ["interaction: discord.Interaction"]
+                    body_lines = ["args = {}"]
+                    for option in spec.options:
+                        annotation = "app_commands.Choice[str]" if option.choices else option.value_type.__name__
+                        default = ""
+                        if not option.required:
+                            default = f" = {option.default!r}"
+                        parameters.append(f"{option.name}: {annotation}{default}")
+                        value_expr = f"{option.name}.value" if option.choices else option.name
+                        body_lines.append(f"args[{option.name!r}] = {value_expr}")
+                    body_lines.append(
+                        "response = self.bot_instance.message_handler.deal_message("
+                        "spec.build_message(args), source='discord-slash')"
                     )
-                    async def setbasis(interaction: discord.Interaction, basis: app_commands.Choice[str]) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message(f"/setbasis {basis.value}", source="discord-slash"))
+                    body_lines.append("await self._respond(interaction, response)")
 
-                    @self.tree.command(name="settime", description=specs["settime"]["description"])
-                    @app_commands.describe(
-                        on_seconds=specs["settime"]["options"]["on_seconds"],
-                        off_seconds=specs["settime"]["options"]["off_seconds"],
-                    )
-                    async def settime(interaction: discord.Interaction, on_seconds: int, off_seconds: int) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message(f"/settime {on_seconds} {off_seconds}", source="discord-slash"))
+                    source = "async def _callback(" + ", ".join(parameters) + "):\n"
+                    for line in body_lines:
+                        source += f"    {line}\n"
 
-                    @self.tree.command(name="setmode", description=specs["setmode"]["description"])
-                    @app_commands.describe(mode=specs["setmode"]["options"]["mode"])
-                    @app_commands.choices(
-                        mode=[
-                            app_commands.Choice(name="temperature", value="temperature"),
-                            app_commands.Choice(name="scheduler", value="scheduler"),
-                        ]
-                    )
-                    async def setmode(interaction: discord.Interaction, mode: app_commands.Choice[str]) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message(f"/setmode {mode.value}", source="discord-slash"))
+                    namespace = {
+                        "app_commands": app_commands,
+                        "discord": discord,
+                        "self": self,
+                        "spec": spec,
+                    }
+                    exec(source, namespace)
+                    callback = namespace["_callback"]
+                    callback.__name__ = f"command_{spec.name}"
 
-                    @self.tree.command(name="timer", description=specs["timer"]["description"])
-                    async def timer(interaction: discord.Interaction) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message("/timer", source="discord-slash"))
-
-                    @self.tree.command(name="scheduler", description=specs["scheduler"]["description"])
-                    async def scheduler(interaction: discord.Interaction) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message("/scheduler", source="discord-slash"))
-
-                    @self.tree.command(name="lock", description=specs["lock"]["description"])
-                    async def lock(interaction: discord.Interaction) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message("/lock", source="discord-slash"))
-
-                    @self.tree.command(name="setlock", description=specs["setlock"]["description"])
-                    @app_commands.describe(
-                        state=specs["setlock"]["options"]["state"],
-                        duration=specs["setlock"]["options"]["duration"],
-                    )
-                    @app_commands.choices(
-                        state=[
-                            app_commands.Choice(name="ON", value="ON"),
-                            app_commands.Choice(name="OFF", value="OFF"),
-                        ]
-                    )
-                    async def setlock(interaction: discord.Interaction, state: app_commands.Choice[str], duration: int) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message(f"/lock {state.value} {duration}", source="discord-slash"))
-
-                    @self.tree.command(name="clearlock", description=specs["clearlock"]["description"])
-                    async def clearlock(interaction: discord.Interaction) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message("/lock clear", source="discord-slash"))
-
-                    @self.tree.command(name="log", description=specs["log"]["description"])
-                    async def botlog(interaction: discord.Interaction) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message("/log", source="discord-slash"))
-
-                    @self.tree.command(name="switchon", description=specs["switchon"]["description"])
-                    async def switchon(interaction: discord.Interaction) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message("/switchOn", source="discord-slash"))
-
-                    @self.tree.command(name="switchoff", description=specs["switchoff"]["description"])
-                    async def switchoff(interaction: discord.Interaction) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message("/switchOff", source="discord-slash"))
-
-                    @self.tree.command(name="stats", description=specs["stats"]["description"])
-                    @app_commands.describe(range_text=specs["stats"]["options"]["range_text"])
-                    async def stats(interaction: discord.Interaction, range_text: str = "24h") -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message(f"/stats {range_text}", source="discord-slash"))
-
-                    @self.tree.command(name="plot", description=specs["plot"]["description"])
-                    @app_commands.describe(range_text=specs["plot"]["options"]["range_text"])
-                    async def plot(interaction: discord.Interaction, range_text: str) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message(f"/plot {range_text}", source="discord-slash"))
-
-                    @self.tree.command(name="help", description=specs["help"]["description"])
-                    async def help_command(interaction: discord.Interaction) -> None:
-                        await self._respond(interaction, self.bot_instance.message_handler.deal_message("/help", source="discord-slash"))
+                    if spec.options:
+                        callback = app_commands.describe(
+                            **{option.name: option.description for option in spec.options}
+                        )(callback)
+                    for option in spec.options:
+                        if option.choices:
+                            callback = app_commands.choices(
+                                **{
+                                    option.name: [
+                                        app_commands.Choice(name=choice, value=choice)
+                                        for choice in option.choices
+                                    ]
+                                }
+                            )(callback)
+                    return callback
 
                 async def _respond(self, interaction: discord.Interaction, response: BotResponse) -> None:
                     if interaction.response.is_done():

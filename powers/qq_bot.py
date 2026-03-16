@@ -25,6 +25,9 @@ class QQBot:
         if self.running:
             log.warning("QQ bot is already running.")
             return
+        if not Bot.APPID or not Bot.SECRET:
+            log.warning("QQ bot credentials are empty; QQ bot will not start.")
+            return
         try:
             self.running = True
             self.bot_thread = threading.Thread(target=self._run_bot, daemon=True)

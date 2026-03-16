@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from powers.auth.ac_api import get_ac_api
+from powers.command_registry import get_discord_command_specs, parse_command_spec
 from powers.data.analysis import ACAnalysisService, fmt_value, parse_range_text
 from powers.data.global_state import (
     read_ac_is_on,
@@ -39,28 +40,7 @@ def _datetime_from_iso(iso_string: str, default: datetime = datetime(1970, 1, 1)
 class BotMessageHandler:
     """Shared command handler used by QQ, Discord, and CLI."""
 
-    DISCORD_COMMAND_SPECS = [
-        {"name": "state", "description": "Show current controller status"},
-        {"name": "settemp", "description": "Set target temperature", "options": {"temperature": "Target temperature, 16-35"}},
-        {"name": "setbasis", "description": "Set temperature basis", "options": {"basis": "temperature or heatindex"}},
-        {
-            "name": "settime",
-            "description": "Set scheduler on-off durations",
-            "options": {"on_seconds": "On duration in seconds", "off_seconds": "Off duration in seconds"},
-        },
-        {"name": "setmode", "description": "Switch control mode", "options": {"mode": "temperature or scheduler"}},
-        {"name": "timer", "description": "Show device off-timer"},
-        {"name": "scheduler", "description": "Show scheduler status"},
-        {"name": "lock", "description": "Show temporary lock status"},
-        {"name": "setlock", "description": "Configure temporary lock", "options": {"state": "ON or OFF", "duration": "Lock duration in seconds"}},
-        {"name": "clearlock", "description": "Clear temporary lock"},
-        {"name": "log", "description": "Show recent logs"},
-        {"name": "switchon", "description": "Turn master switch on"},
-        {"name": "switchoff", "description": "Turn master switch off"},
-        {"name": "stats", "description": "Show data statistics", "options": {"range_text": "1h/2h/6h/12h/24h/3d/7d/30d or start,end"}},
-        {"name": "plot", "description": "Generate an analysis figure", "options": {"range_text": "1h/2h/6h/12h/24h/3d/7d/30d or start,end"}},
-        {"name": "help", "description": "Show help menu"},
-    ]
+    DISCORD_COMMAND_SPECS = get_discord_command_specs()
 
     def __init__(self) -> None:
         self.settings_manager = get_settings_manager()
@@ -68,34 +48,22 @@ class BotMessageHandler:
         self.language = str(Config.BOT_LANGUAGE).lower()
 
     def get_discord_command_specs(self) -> list[dict]:
-        return self.DISCORD_COMMAND_SPECS
+        return list(self.DISCORD_COMMAND_SPECS)
 
     def deal_message(self, content: str, source: str = "unknown") -> BotResponse:
         content = content.strip()
         preview = content if len(content) <= 160 else f"{content[:157]}..."
-        lowered = content.lower()
-
-        commands = [
-            ("/state", self._handle_state_command),
-            ("/setbasis", lambda: self._handle_setbasis_command(content)),
-            ("/settime", lambda: self._handle_settime_command(content)),
-            ("/settemp", lambda: self._handle_settemp_command(content)),
-            ("/setmode", lambda: self._handle_setmode_command(content)),
-            ("/timer", self._handle_timer_command),
-            ("/scheduler", self._handle_scheduler_command),
-            ("/lock", lambda: self._handle_lock_command(content)),
-            ("/log", self._handle_log_command),
-            ("/switchon", lambda: self._handle_switch_command(True)),
-            ("/switchoff", lambda: self._handle_switch_command(False)),
-            ("/stats", lambda: self._handle_stats_command(content)),
-            ("/plot", lambda: self._handle_plot_command(content)),
-            ("/help", self._handle_help_command),
-        ]
-        for prefix, handler in commands:
-            if lowered.startswith(prefix):
-                response = handler()
-                log.info(f"[command] source={source} handled={preview}")
-                return response
+        spec = parse_command_spec(content)
+        if spec is not None:
+            handler = getattr(self, spec.handler_name)
+            if spec.name == "switchon":
+                response = handler(True)
+            elif spec.name == "switchoff":
+                response = handler(False)
+            else:
+                response = handler(content)
+            log.info(f"[command] source={source} handled={preview}")
+            return response
 
         log.warning(f"[command] source={source} unknown command: {preview}")
         return BotResponse(self._msg("❌ 未知指令。使用 /help 查看可用命令。", "❌ Unknown command. Use /help to see the available commands."))
@@ -151,13 +119,14 @@ class BotMessageHandler:
             parts.append(f"{s}s")
         return " ".join(parts)
 
-    def _handle_state_command(self) -> BotResponse:
+    def _handle_state_command(self, content: str = "/state") -> BotResponse:
         try:
-            settings = self.settings_manager.load_settings()
-            control_mode = settings.get("control_mode", "temperature")
-            control_basis = settings.get("temperature_control_basis", "temperature")
-            switch = settings.get("switch", 1)
-            target_temp = settings.get("target_temp", 29.5)
+            _ = content
+            settings = self.settings_manager.load()
+            control_mode = settings.control_mode
+            control_basis = settings.temperature_control_basis
+            switch = settings.switch
+            target_temp = settings.target_temp
             climate = read_indoor_climate()
             ac_on = read_ac_is_on()
             balance = _get_api().get_balance()[0]
@@ -267,8 +236,9 @@ class BotMessageHandler:
             log.error(f"setmode command failed: {exc}")
             return BotResponse(self._msg(f"❌ 设置模式失败：{exc}", f"❌ Failed to set mode: {exc}"))
 
-    def _handle_timer_command(self) -> BotResponse:
+    def _handle_timer_command(self, content: str = "/timer") -> BotResponse:
         try:
+            _ = content
             timer = _get_api().get_timer()
             if timer:
                 return BotResponse(self._msg(f"⏲️ 设备关机定时：{timer:%Y-%m-%d %H:%M:%S}", f"⏲️ Device off-timer: {timer:%Y-%m-%d %H:%M:%S}"))
@@ -277,14 +247,15 @@ class BotMessageHandler:
             log.error(f"timer command failed: {exc}")
             return BotResponse(self._msg(f"❌ 获取定时失败：{exc}", f"❌ Failed to get timer: {exc}"))
 
-    def _handle_scheduler_command(self) -> BotResponse:
+    def _handle_scheduler_command(self, content: str = "/scheduler") -> BotResponse:
         try:
-            settings = self.settings_manager.load_settings()
-            if settings.get("control_mode", "temperature") != "scheduler":
+            _ = content
+            settings = self.settings_manager.load()
+            if settings.control_mode != "scheduler":
                 return BotResponse(self._msg("ℹ️ 当前不是定时模式，请先使用 /setmode scheduler。", "ℹ️ Scheduler mode is not active. Use /setmode scheduler first."))
 
-            ontime = settings.get("ontime", Config.DEFAULT_ONTIME)
-            offtime = settings.get("offtime", Config.DEFAULT_OFFTIME)
+            ontime = settings.ontime
+            offtime = settings.offtime
             ac_on = read_ac_is_on()
             last_switch = read_last_switch()
             now = datetime.now()
@@ -308,11 +279,11 @@ class BotMessageHandler:
         try:
             parts = content.split()
             if len(parts) == 1:
-                settings = self.settings_manager.load_settings()
-                end = _datetime_from_iso(settings.get("lock_end_time", datetime(1970, 1, 1).isoformat()))
+                settings = self.settings_manager.load()
+                end = _datetime_from_iso(settings.lock_end_time, datetime(1970, 1, 1))
                 if datetime.now() >= end:
                     return BotResponse(self._msg("🔓 当前没有临时锁定。", "🔓 There is no active temporary lock."))
-                lock = settings.get("lock_status", False)
+                lock = settings.lock_status
                 remaining = int((end - datetime.now()).total_seconds())
                 return BotResponse(
                     "\n".join(
@@ -325,10 +296,10 @@ class BotMessageHandler:
                     )
                 )
             if len(parts) == 2 and parts[1].lower() == "clear":
-                settings = self.settings_manager.load_settings()
-                settings["lock_status"] = False
-                settings["lock_end_time"] = datetime(1970, 1, 1).isoformat()
-                self.settings_manager.save_settings(settings)
+                self.settings_manager.update(
+                    lock_status=False,
+                    lock_end_time=datetime(1970, 1, 1).isoformat(),
+                )
                 return BotResponse(self._msg("✅ 临时锁定已清除。", "✅ Temporary lock cleared."))
             if len(parts) == 3:
                 state = parts[1].upper()
@@ -364,8 +335,9 @@ class BotMessageHandler:
             log.error(f"switch command failed: {exc}")
             return BotResponse(self._msg(f"❌ 切换总开关失败：{exc}", f"❌ Failed to change master switch: {exc}"))
 
-    def _handle_log_command(self) -> BotResponse:
+    def _handle_log_command(self, content: str = "/log") -> BotResponse:
         try:
+            _ = content
             lines: list[str] = []
             applied = read_recent_applied()
             if applied:
@@ -468,7 +440,8 @@ class BotMessageHandler:
             log.error(f"plot command failed: {exc}")
             return BotResponse(self._msg(f"❌ 生成图像失败：{exc}", f"❌ Failed to generate figure: {exc}"))
 
-    def _handle_help_command(self) -> BotResponse:
+    def _handle_help_command(self, content: str = "/help") -> BotResponse:
+        _ = content
         return BotResponse(
             "\n".join(
                 [

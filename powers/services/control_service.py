@@ -35,24 +35,24 @@ class ControlService:
     @staticmethod
     def decide() -> Tuple[Optional[Literal["open", "close"]], Optional[datetime], dict]:
         """Determine whether to change the AC state."""
-        settings = get_settings_manager().load_settings()
+        settings = get_settings_manager().load()
         now = datetime.now()
         ac_is_on = read_ac_is_on()
         current_state_action: Literal["open", "close"] = "open" if ac_is_on else "close"
 
-        lock_status = settings["lock_status"]
-        lock_end_time = _datetime_from_iso(settings["lock_end_time"])
+        lock_status = settings.lock_status
+        lock_end_time = _datetime_from_iso(settings.lock_end_time)
         if now < lock_end_time:
             mismatch = ac_is_on != lock_status
             reason = "lock_active_state_mismatch" if mismatch else "lock_active_state_match"
             return ("open" if lock_status else "close"), lock_end_time, {"reason": reason}
 
-        control_mode = settings["control_mode"]
+        control_mode = settings.control_mode
         last_switch = read_last_switch()
 
         if control_mode == "scheduler":
-            ontime = settings["ontime"]
-            offtime = settings["offtime"]
+            ontime = settings.ontime
+            offtime = settings.offtime
             elapsed = (now - last_switch).total_seconds()
 
             if ac_is_on:
@@ -65,21 +65,21 @@ class ControlService:
             return "close", last_switch + timedelta(seconds=offtime), {"reason": "scheduler_off_wait"}
 
         if control_mode == "temperature":
-            cooldown_secs = settings["cooldown_time"]
+            cooldown_secs = settings.cooldown_time
             cooldown_delta = timedelta(seconds=cooldown_secs)
             if last_switch + cooldown_delta > now:
                 return current_state_action, last_switch + cooldown_delta, {"reason": "cooldown"}
 
-            basis = settings.get("temperature_control_basis", "temperature")
+            basis = settings.temperature_control_basis
             climate = read_indoor_climate()
             current_value = climate.temperature if basis == "temperature" else climate.heat_index
-            target_value = settings.get("target_temp", 29.5)
+            target_value = settings.target_temp
 
             if current_value is None:
                 return current_state_action, None, {"reason": f"{basis}_unavailable", "basis": basis}
 
-            threshold_high = settings["temp_threshold_high"]
-            threshold_low = settings["temp_threshold_low"]
+            threshold_high = settings.temp_threshold_high
+            threshold_low = settings.temp_threshold_low
             metric_key = "current_temp" if basis == "temperature" else "current_heat_index"
 
             if current_value < target_value - threshold_low and ac_is_on:

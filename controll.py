@@ -101,8 +101,8 @@ def control_logic_thread() -> None:
 
     while not stop_event.is_set():
         try:
-            settings = settings_manager.load_settings()
-            switch = settings.get("switch", 1)
+            settings = settings_manager.load()
+            switch = settings.switch
 
             if switch == 0:
                 log.info("Master switch is OFF; skipping control cycle.")

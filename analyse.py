@@ -103,7 +103,7 @@ def run_summary(args: argparse.Namespace) -> int:
 
 def run_prompt(args: argparse.Namespace) -> int:
     service = ACAnalysisService()
-    settings = get_settings_manager().load_settings()
+    settings = get_settings_manager().load().to_dict()
     start_time, end_time, _ = parse_range(args.range_text)
     prompt = service.generate_ai_prompt(start_time, end_time, settings)
     print(prompt)

@@ -1,123 +1,76 @@
+from __future__ import annotations
+
 import json
-import os
+from dataclasses import asdict, dataclass, fields, replace
+from pathlib import Path
 import threading
-from dataclasses import asdict, dataclass, field, fields
-from typing import Any, Dict, Optional
+from typing import Any, Mapping, Optional
 
-from powers.utils.logger import log
 from powers.utils.config import Config
+from powers.utils.logger import log
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-EPOCH_ISO = '1970-01-01T00:00:00'
+EPOCH_ISO = "1970-01-01T00:00:00"
 
 
-# ---------------------------------------------------------------------------
-# Settings dataclass
-# ---------------------------------------------------------------------------
-
-
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ACSettings:
-    """
-    Persistent configuration for the AC controller.
-
-    Stored in a JSON file. This dataclass is a typed view over the persisted
-    JSON object.
-    """
-
-    # Master switch (1 = enabled, 0 = disabled)
     switch: int = 1
-
-    # 'temperature' or 'scheduler'
     control_mode: str = "temperature"
-
-    # Target indoor control metric (temperature or heat index, unit: °C)
     target_temp: float = 29.5
-
-    # Metric used inside temperature control mode
-    temperature_control_basis: str = "temperature" # "temperature" or "heat_index"
-
-    # Temperature-mode hysteresis thresholds
+    temperature_control_basis: str = "temperature"
     temp_threshold_high: float = Config.TEMP_THRESHOLD_HIGH
     temp_threshold_low: float = Config.TEMP_THRESHOLD_LOW
-
-    # Minimum seconds between consecutive AC toggles
     cooldown_time: int = Config.COOLDOWN_TIME
-
-    # Scheduler-mode on/off durations (seconds)
     ontime: int = Config.DEFAULT_ONTIME
     offtime: int = Config.DEFAULT_OFFTIME
-
-    # Temporary lock that keeps the AC in a fixed state until lock_end_time
     lock_status: bool = False
     lock_end_time: str = EPOCH_ISO
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Return the settings as a plain dict (datetime values preserved)."""
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-    @staticmethod
-    def from_dict(data: Dict[str, Any]) -> "ACSettings":
-        """
-        Construct an :class:`ACSettings` from a dict.
+    def with_updates(self, **updates: Any) -> "ACSettings":
+        valid_fields = {field.name for field in fields(type(self))}
+        valid_updates = {key: value for key, value in updates.items() if key in valid_fields}
+        for key in updates.keys() - valid_fields:
+            log.warning(f"Unknown setting key: {key!r}")
+        if not valid_updates:
+            return self
+        return replace(self, **valid_updates)
 
-        All values are passed through as-is since json.load returns the
-        correct Python types for our fields.
-        """
-        valid = {f.name for f in fields(ACSettings)}
-        kwargs = {k: v for k, v in data.items() if k in valid}
-        s = ACSettings(**kwargs)
-        return s
-
-# ---------------------------------------------------------------------------
-# JSON repository with in-process cache
-# ---------------------------------------------------------------------------
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ACSettings":
+        valid_fields = {field.name for field in fields(cls)}
+        filtered = {key: value for key, value in data.items() if key in valid_fields}
+        return cls(**filtered)
 
 
 class JSONSettingsRepository:
-    """
-    Persist settings in a JSON file.
-
-    The repository stores one JSON object:
-    - _load_raw() reads the full document
-    - save_all() rewrites the file only when content changed
-    - _cache avoids repeated reads within the process
-    """
-
-    def __init__(self) -> None:
-        self.file_path = Config.SETTINGS_JSON_PATH
-        self._lock = threading.Lock()
-        self._cache: Dict[str, Any] = {}
-        self._cache_loaded: bool = False
+    def __init__(self, file_path: str | Path = Config.SETTINGS_JSON_PATH) -> None:
+        self.file_path = Path(file_path)
+        self._lock = threading.RLock()
+        self._cache: dict[str, Any] | None = None
+        self._cache_mtime_ns: int | None = None
         self._ensure_store()
 
     def _ensure_store(self) -> None:
-        os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-        if os.path.exists(self.file_path):
-            return
-        self._write_raw(ACSettings().to_dict())
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.file_path.exists():
+            self._write_raw(ACSettings().to_dict())
 
-    def _write_raw(self, data: Dict[str, Any]) -> None:
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=True, indent=2, sort_keys=True)
+    def _write_raw(self, data: Mapping[str, Any]) -> None:
+        with self.file_path.open("w", encoding="utf-8") as handle:
+            json.dump(dict(data), handle, ensure_ascii=True, indent=2, sort_keys=True)
 
-    def _load_raw(self) -> Dict[str, Any]:
-        """
-        Read the full JSON document from disk.
-
-        This method does not acquire locks; callers handle synchronization.
-        """
+    def _load_raw(self) -> dict[str, Any]:
         try:
-            with open(self.file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            with self.file_path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
         except FileNotFoundError:
             return ACSettings().to_dict()
-        except Exception as e:
-            log.warning(f"Failed to load settings JSON from {self.file_path}: {e}")
+        except Exception as exc:
+            log.warning(f"Failed to load settings JSON from {self.file_path}: {exc}")
             return ACSettings().to_dict()
 
         if not isinstance(data, dict):
@@ -125,150 +78,84 @@ class JSONSettingsRepository:
             return ACSettings().to_dict()
         return data
 
-    def load_all(self) -> Dict[str, Any]:
-        """
-        Return the full JSON settings document.
+    def _get_mtime_ns(self) -> int | None:
+        try:
+            return self.file_path.stat().st_mtime_ns
+        except FileNotFoundError:
+            return None
 
-        The repository loads from disk once and then serves copies of the
-        in-process cache.
-        """
+    def load_all(self) -> dict[str, Any]:
         with self._lock:
-            if not self._cache_loaded:
-                try:
-                    self._cache = self._load_raw()
-                    self._cache_loaded = True
-                except Exception as e:
-                    log.warning(f"Failed to load settings JSON from {self.file_path}: {e}")
-                    self._cache = ACSettings().to_dict()
-                    self._cache_loaded = True
-            # Return a copy so callers cannot mutate the cache directly.
+            current_mtime_ns = self._get_mtime_ns()
+            if self._cache is None or self._cache_mtime_ns != current_mtime_ns:
+                self._cache = self._load_raw()
+                self._cache_mtime_ns = current_mtime_ns
             return dict(self._cache)
 
-    def save_all(self, data: Dict[str, Any]) -> None:
-        """
-        Persist the full JSON settings document.
-
-        The repository only rewrites the file when content actually changed.
-        """
+    def save_all(self, data: Mapping[str, Any]) -> None:
+        normalized = dict(data)
         with self._lock:
-            try:
-                if not self._cache_loaded:
-                    self._cache = self._load_raw()
-                    self._cache_loaded = True
-                if self._cache == data:
-                    return
-                self._write_raw(data)
-                self._cache = dict(data)
-                log.detail("Settings JSON saved.")
-            except Exception as e:
-                log.error(f"Failed to save settings JSON to {self.file_path}: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Settings manager (public API)
-# ---------------------------------------------------------------------------
+            current_mtime_ns = self._get_mtime_ns()
+            if self._cache is None or self._cache_mtime_ns != current_mtime_ns:
+                self._cache = self._load_raw()
+                self._cache_mtime_ns = current_mtime_ns
+            if self._cache == normalized:
+                return
+            self._write_raw(normalized)
+            self._cache = dict(normalized)
+            self._cache_mtime_ns = self._get_mtime_ns()
+            log.detail("Settings JSON saved.")
 
 
 class ACSettingsManager:
-    """
-    High-level interface for reading and writing AC settings.
-
-    Callers work with ACSettings or plain dict values, while the repository
-    remains a simple JSON document store.
-    """
-
     def __init__(self, repo: Optional[JSONSettingsRepository] = None) -> None:
         self.repo = repo or JSONSettingsRepository()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
-    # ---------- JSON <-> ACSettings mapping ----------
+    def load(self) -> ACSettings:
+        return ACSettings.from_dict(self.repo.load_all())
 
-    def _data_to_settings(self, data: Dict[str, Any]) -> ACSettings:
-        """
-        Convert the stored JSON object into a typed ACSettings instance.
-        """
-        return ACSettings.from_dict(data)
+    def load_settings(self) -> dict[str, Any]:
+        return self.load().to_dict()
 
-    def _settings_to_data(self, settings: ACSettings) -> Dict[str, Any]:
-        """
-        Convert ACSettings into the persisted JSON representation.
-        """
-        return settings.to_dict()
+    def save(self, settings: ACSettings) -> ACSettings:
+        self.repo.save_all(settings.to_dict())
+        return settings
 
-    # ---------- Public API ----------
-
-    def load_settings(self) -> Dict[str, Any]:
-        """
-        Return all settings as a plain dict (datetime preserved).
-        """
-        data = self.repo.load_all()
-        settings = self._data_to_settings(data)
-        return settings.to_dict()
-
-    def save_settings(self, settings_dict: Dict[str, Any]) -> None:
-        """
-        Overwrite all settings from a plain dict.
-        """
-        settings = ACSettings.from_dict(settings_dict)
-        data = self._settings_to_data(settings)
-        self.repo.save_all(data)
+    def save_settings(self, settings_dict: Mapping[str, Any]) -> ACSettings:
+        return self.save(ACSettings.from_dict(settings_dict))
 
     def get_setting(self, key: str, default: Any = None) -> Any:
-        """
-        Read a single setting by name.
-        """
-        settings_dict = self.load_settings()
-        return settings_dict.get(key, default)
+        return getattr(self.load(), key, default)
 
-    def set_setting(self, key: str, value: Any) -> None:
-        """
-        Update a single setting by name.
-        """
+    def set_setting(self, key: str, value: Any) -> ACSettings:
+        return self.update(**{key: value})
+
+    def update(self, **updates: Any) -> ACSettings:
         with self._lock:
-            data = self.repo.load_all()
-            settings = self._data_to_settings(data)
-            if hasattr(settings, key):
-                setattr(settings, key, value)
-                new_data = self._settings_to_data(settings)
-                self.repo.save_all(new_data)
-            else:
-                log.warning(f"Unknown setting key: {key!r}")
+            settings = self.load()
+            updated = settings.with_updates(**updates)
+            return self.save(updated)
 
-    def update_multiple_settings(self, updates: Dict[str, Any]) -> None:
-        """
-        Atomically update multiple settings from a dict.
-        """
-        with self._lock:
-            data = self.repo.load_all()
-            settings = self._data_to_settings(data)
-            for k, v in updates.items():
-                if hasattr(settings, k):
-                    setattr(settings, k, v)
-                else:
-                    log.warning(f"Unknown setting key: {k!r}")
-            new_data = self._settings_to_data(settings)
-            self.repo.save_all(new_data)
+    def update_multiple_settings(self, updates: Mapping[str, Any]) -> ACSettings:
+        return self.update(**dict(updates))
 
 
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
-
-_settings_manager: Optional[ACSettingsManager] = None
+_settings_manager: ACSettingsManager | None = None
+_settings_manager_lock = threading.Lock()
 
 
 def get_settings_manager() -> ACSettingsManager:
-    """Return the process-wide :class:`ACSettingsManager` singleton."""
     global _settings_manager
     if _settings_manager is None:
-        _settings_manager = ACSettingsManager()
+        with _settings_manager_lock:
+            if _settings_manager is None:
+                _settings_manager = ACSettingsManager()
     return _settings_manager
 
 
 if __name__ == "__main__":
     manager = get_settings_manager()
-    manager.update_multiple_settings({
-        'target_temp': 30.2
-    })
-    for k, v in manager.load_settings().items():
-        print(f"  {k}: {v}")
+    manager.update(target_temp=30.2)
+    for key, value in manager.load().to_dict().items():
+        print(f"  {key}: {value}")

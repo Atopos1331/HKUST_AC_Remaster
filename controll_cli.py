@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 import sys
 from pathlib import Path
 from queue import Empty, Queue
@@ -16,6 +15,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Footer, Header, Input, RichLog, Static
 
+from powers.command_registry import normalize_user_command
 from powers.message_handler import BotMessageHandler, BotResponse
 from powers.utils.config import Config
 from powers.utils.logger import (
@@ -315,29 +315,7 @@ class ControlCliApp(App[None]):
         }
         if lowered in local_commands:
             return local_commands[lowered]
-        if text.startswith("/"):
-            return text
-
-        try:
-            parts = shlex.split(text)
-        except ValueError:
-            parts = text.split()
-        if not parts:
-            return text
-
-        head = parts[0].lower()
-        aliases = {
-            "setlock": "/lock",
-            "clearlock": "/lock clear",
-            "switchon": "/switchOn",
-            "switchoff": "/switchOff",
-        }
-        bot_commands = {spec["name"] for spec in BotMessageHandler.DISCORD_COMMAND_SPECS}
-        if head in aliases:
-            return f"{aliases[head]} {' '.join(parts[1:])}".strip()
-        if head in bot_commands:
-            return f"/{parts[0]} {' '.join(parts[1:])}".strip()
-        return text
+        return normalize_user_command(text)
 
 
 def main() -> None:
