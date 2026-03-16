@@ -1,0 +1,48 @@
+# Secrets
+creds/*
+creds.json
+!creds/credentials.example.json
+
+# Runtime data
+data/*
+figure/*
+log/*
+!data/.gitkeep
+!figure/.gitkeep
+!log/.gitkeep
+
+# Browser / session state
+browser_profile/
+
+# Python caches and build outputs
+__pycache__/
+*/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+
+# IDE / editor
+.idea/
+.vscode/
+*.iml
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
