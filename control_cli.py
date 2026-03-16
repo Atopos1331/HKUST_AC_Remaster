@@ -169,7 +169,7 @@ class ControlCliApp(App[None]):
         if self.enable_runtime:
             starter = self.runtime_starter
             if starter is None:
-                from controll import start_runtime
+                from control import start_runtime
 
                 starter = start_runtime
             self.runtime = starter()
@@ -215,7 +215,7 @@ class ControlCliApp(App[None]):
         if self.runtime is not None:
             stopper = self.runtime_stopper
             if stopper is None:
-                from controll import shutdown_runtime
+                from control import shutdown_runtime
 
                 stopper = shutdown_runtime
             stopper(self.runtime)
@@ -255,7 +255,7 @@ class ControlCliApp(App[None]):
             output_view.write(Text(cli_text("面板已清空。", "Panels cleared."), style="bright_yellow"), scroll_end=True)
             return
         if parsed == "help":
-            help_response = self.message_handler.deal_message("/help", source="controll-cli")
+            help_response = self.message_handler.deal_message("/help", source="control-cli")
             for line in help_response.text.splitlines() or [""]:
                 output_view.write(Text(line), scroll_end=True)
             output_view.write(Text(""), scroll_end=True)
@@ -271,7 +271,7 @@ class ControlCliApp(App[None]):
         output_view.write(Text(cli_text(f"已解析: {parsed}", f"parsed: {parsed}"), style="bright_green"), scroll_end=True)
         output_view.write(Text(cli_text("处理中...", "processing..."), style="white"), scroll_end=True)
         worker = self.run_worker(
-            lambda: self.message_handler.deal_message(parsed, source="controll-cli"),
+            lambda: self.message_handler.deal_message(parsed, source="control-cli"),
             name="command-dispatch",
             group="command-dispatch",
             description=parsed,

@@ -1,34 +1,31 @@
 # HKUST AC Remaster
 
-Automated controller for a HKUST dorm air-conditioner, with local temperature/humidity sensor polling, prepaid AC portal integration, historical data recording, and QQ/Discord bot control.
+Automated controller for a HKUST dorm air-conditioner, with prepaid portal integration, indoor climate polling, historical recording, and QQ/Discord/local CLI control.
 
 Documentation:
 
 - Chinese: [README.zh-CN.md](README.zh-CN.md)
 - English: [README.en.md](README.en.md)
-- Setup guide with Microsoft MFA, QQ bot, and Discord bot instructions:
+- Setup guide:
   - Chinese: [docs/setup.zh-CN.md](docs/setup.zh-CN.md)
   - English: [docs/setup.en.md](docs/setup.en.md)
-
-## Highlights
-
-- HKUST SSO login with Microsoft TOTP
-- Indoor climate polling through a temperature/humidity sensor module
-- Automatic temperature-mode and scheduler-mode control
-- Local SQLite history recording and figure export
-- QQ bot, Discord bot, and local Textual CLI interfaces
+- Detailed control strategy:
+  - Chinese: [docs/control-strategy.zh-CN.md](docs/control-strategy.zh-CN.md)
+  - English: [docs/control-strategy.en.md](docs/control-strategy.en.md)
 
 ## Quick Start
 
 ```bash
 pip install -r requirements.txt
 playwright install chromium
-python controll.py
+python run_forever.py
 ```
 
-Credentials can be stored in either `creds.json` or `creds/credentials.json`. Start from `creds/credentials.example.json`.
+Notes:
 
-The project now uses a built-in default temperature/humidity sensor module that returns fixed values. If you want to use your own local hardware driver, create `powers/io/local_thermometer.py` and implement the `Thermometer` abstract class, then the system will automatically use it instead of the default one.
+- The project is not Windows-only. It can run on Windows, Linux, or macOS as long as Python, Playwright Chromium, and the required network access are available.
+- `run_forever.py` is the recommended long-running entry point. It restarts `controll_cli.py` automatically after unexpected exits.
+- `start.bat` is only a Windows convenience wrapper around `python run_forever.py`.
 
 ## License
 
