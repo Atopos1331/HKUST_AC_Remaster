@@ -30,4 +30,4 @@ Credentials can be stored in either `creds.json` or `creds/credentials.json`. St
 
 ## License
 
-The project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+The project is licensed under the MIT License.
