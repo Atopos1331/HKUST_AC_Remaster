@@ -46,3 +46,7 @@ env/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Self script for launching the app
+*.sh
+*.bat
