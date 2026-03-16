@@ -28,4 +28,6 @@ python controll.py
 
 Credentials can be stored in either `creds.json` or `creds/credentials.json`. Start from `creds/credentials.example.json`.
 
-## License is licensed under MIT. See [LICENSE](LICENSE) for details.
+## License
+
+The project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
