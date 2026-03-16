@@ -4,15 +4,13 @@ HKUST AC Remaster is an automated controller for a HKUST dorm air-conditioner. I
 
 ## Features
 
-- HKUST login through Microsoft SSO with TOTP
-- Indoor climate polling through an SHT4x serial bridge
+- HKUST login through Playwright with TOTP
+- Indoor climate polling through a temperature/humidity sensor module
 - Temperature mode and scheduler mode control logic
 - SQLite history recording, range statistics, and figure export
 - QQ bot, Discord bot, and local Textual CLI interfaces
 
 ## Screenshot Slots
-
-The sections below are intentionally reserved for GitHub screenshots. You can later place actual images under something like `docs/images/` and replace the paths.
 
 ### Runtime Overview
 
@@ -50,7 +48,7 @@ docs/               Chinese / English setup guides
 - Python 3.10+
 - Access to the HKUST AC portal network path
 - An available Microsoft Authenticator-compatible TOTP app
-- An SHT4x serial bridge on the configured COM port
+- Optional: a local temperature/humidity sensor module override if you want live indoor readings
 - Optional: QQ bot and Discord bot developer accounts
 
 ## Install
@@ -140,12 +138,13 @@ This is useful when debugging authentication, control logic, or one bot integrat
 
 ## Current Sensor Logic
 
-The current temperature / humidity reading path is based on my own hardware setup. It is not intended as a universal off-the-shelf sensor driver.
+The project now ships with a built-in default temperature/humidity sensor module. It returns fixed values so the rest of the controller can run without any physical hardware.
 
-The default implementation is split into:
+The thermometer path is split into:
 
 - abstract interface: `powers/io/thermometer.py`
-- current hardware implementation: `powers/io/sht4x_serial_sensor.py`
+- default fallback implementation: `powers/io/default_thermometer.py`
+- local private override example: `powers/io/local_thermometer.example.py`
 
 The `Thermometer` base class defines the core methods:
 
@@ -153,51 +152,19 @@ The `Thermometer` base class defines the core methods:
 - `get_climate()`
 - `get_device_info()`
 
-The default `get_thermometer()` entry point currently instantiates `SHT4xSerialThermometer(port=SERIAL_PORT)` and returns `IndoorClimateReading(temperature, humidity)` through `get_climate()`.
+The default `get_thermometer()` entry point now does this:
+
+- first tries to import `powers.io.local_thermometer`
+- if that file does not exist, falls back to `powers/io/default_thermometer.py`
+- returns `IndoorClimateReading(temperature, humidity)` through `get_climate()`
 
 ### How to Adapt Your Own Hardware
 
 There are three common options:
 
-1. Buy or build a compatible sensor setup and implement your own module against the existing `Thermometer` abstract interface.
-2. Change the import / factory entry in `powers/io/thermometer.py` so `get_thermometer()` points to your own implementation.
-3. If you do not have a real sensor yet, create a placeholder module that returns fixed temperature and humidity values and only use scheduler mode.
-
-### Recommended Extension Pattern
-
-You can create a module like:
-
-```python
-from powers.io.thermometer import IndoorClimateReading, Thermometer
-
-
-class DummyThermometer(Thermometer):
-    def connect(self) -> None:
-        pass
-
-    def get_climate(self) -> IndoorClimateReading:
-        return IndoorClimateReading(temperature=27.0, humidity=60.0)
-
-    def get_device_info(self) -> dict:
-        return {"driver": "dummy"}
-```
-
-Then point `powers/io/thermometer.py` at that implementation. The rest of the project can remain unchanged.
-
-### If You Do Not Have a Sensor
-
-If you mainly want to use the project as an automated AC scheduler:
-
-- provide a placeholder climate module
-- switch the controller to `scheduler` mode
-- do not depend on real indoor feedback
-
-In that configuration you can still use:
-
-- automatic login and AC control
-- bot commands
-- logging
-- electrical / balance / outdoor weather recording
+1. Keep using the built-in default module if fixed values are enough for your workflow.
+2. Create your own local-only module at `powers/io/local_thermometer.py` against the existing `Thermometer` abstract interface.
+3. If you want a custom factory, expose `get_thermometer()` inside `powers/io/local_thermometer.py`.
 
 ## Control Strategy
 
@@ -355,12 +322,13 @@ QQ, Discord, and the local CLI all route into the same command handler. Common c
 - `/timer`
 - `/lock`
 - `/log`
-- `/stats 24h`
-- `/plot 6h`
-- `/settemp 28.5`
-- `/setbasis temperature|heatindex`
-- `/settime 300 1200`
-- `/setmode temperature|scheduler`
+- `/stats <range>` | eg: `/stats 24h`
+- `/plot <range>` | eg: `/plot 6h`
+- `/plot <YYYY-MM-DD HH:MM, YYYY-MM-DD HH:MM>` | eg: `/plot 2026-03-16 00:00, 2026-03-16 12:00`
+- `/settemp <temperature>` | eg: `/settemp 28.5`
+- `/setbasis <temperature|heatindex>` | eg: `/setbasis temperature`
+- `/settime <on_seconds> <off_seconds>` | eg: `/settime 300 1200`
+- `/setmode <temperature|scheduler>` | eg: `/setmode scheduler`
 - `/switchOn`
 - `/switchOff`
 

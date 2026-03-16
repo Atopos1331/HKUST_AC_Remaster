@@ -1,6 +1,6 @@
 # HKUST AC Remaster
 
-Automated controller for a HKUST dorm air-conditioner, with local sensor polling, prepaid AC portal integration, historical data recording, and QQ/Discord bot control.
+Automated controller for a HKUST dorm air-conditioner, with local temperature/humidity sensor polling, prepaid AC portal integration, historical data recording, and QQ/Discord bot control.
 
 Documentation:
 
@@ -13,7 +13,7 @@ Documentation:
 ## Highlights
 
 - HKUST SSO login with Microsoft TOTP
-- Indoor climate polling through an SHT4x serial bridge
+- Indoor climate polling through a temperature/humidity sensor module
 - Automatic temperature-mode and scheduler-mode control
 - Local SQLite history recording and figure export
 - QQ bot, Discord bot, and local Textual CLI interfaces
@@ -27,6 +27,8 @@ python controll.py
 ```
 
 Credentials can be stored in either `creds.json` or `creds/credentials.json`. Start from `creds/credentials.example.json`.
+
+The project now uses a built-in default temperature/humidity sensor module that returns fixed values. If you want to use your own local hardware driver, create `powers/io/local_thermometer.py` and implement the `Thermometer` abstract class, then the system will automatically use it instead of the default one.
 
 ## License
 

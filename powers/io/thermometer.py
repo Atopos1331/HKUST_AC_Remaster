@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from importlib import import_module
 from typing import Optional
-
-
-SERIAL_PORT = "COM3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,13 +37,42 @@ class Thermometer(ABC):
 _thermometer: Optional[Thermometer] = None
 
 
+def _build_default_thermometer() -> Thermometer:
+    from powers.io.default_thermometer import DefaultThermometer
+
+    return DefaultThermometer()
+
+
+def _build_local_thermometer() -> Thermometer | None:
+    try:
+        module = import_module("powers.io.local_thermometer")
+    except ModuleNotFoundError:
+        return None
+
+    factory = getattr(module, "get_thermometer", None)
+    if callable(factory):
+        thermometer = factory()
+        if not isinstance(thermometer, Thermometer):
+            raise TypeError("powers.io.local_thermometer.get_thermometer() must return a Thermometer")
+        return thermometer
+
+    local_class = getattr(module, "LocalThermometer", None)
+    if local_class is None:
+        raise AttributeError(
+            "powers.io.local_thermometer must define LocalThermometer or get_thermometer()"
+        )
+
+    thermometer = local_class()
+    if not isinstance(thermometer, Thermometer):
+        raise TypeError("powers.io.local_thermometer.LocalThermometer must inherit from Thermometer")
+    return thermometer
+
+
 def get_thermometer() -> Thermometer:
     """Return the process-wide thermometer implementation."""
     global _thermometer
     if _thermometer is None:
-        from powers.io.sht4x_serial_sensor import SHT4xSerialThermometer
-
-        _thermometer = SHT4xSerialThermometer(port=SERIAL_PORT)
+        _thermometer = _build_local_thermometer() or _build_default_thermometer()
     return _thermometer
 
 

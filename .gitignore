@@ -50,3 +50,6 @@ desktop.ini
 # Self script for launching the app
 *.sh
 *.bat
+
+# Local-only hardware overrides
+powers/io/local_thermometer.py

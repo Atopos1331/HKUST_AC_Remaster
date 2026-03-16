@@ -130,6 +130,14 @@ class BotMessageHandler:
             return self._na()
         return f"{value:.{precision}f} {unit}"
 
+    def _syntax_line(self, syntax: str, example: Optional[str] = None) -> str:
+        zh = f"📌 语法: {syntax}"
+        en = f"📌 Syntax: {syntax}"
+        if example:
+            zh = f"{zh} | eg: {example}"
+            en = f"{en} | eg: {example}"
+        return self._msg(zh, en)
+
     @staticmethod
     def _fmt_duration(seconds: int) -> str:
         h, rem = divmod(seconds, 3600)
@@ -175,12 +183,7 @@ class BotMessageHandler:
         try:
             parts = content.split()
             if len(parts) != 3:
-                return BotResponse(
-                    self._msg(
-                        "📌 用法: /settime <on_seconds> <off_seconds>\n示例: /settime 300 1200",
-                        "📌 Usage: /settime <on_seconds> <off_seconds>\nExample: /settime 300 1200",
-                    )
-                )
+                return BotResponse(self._syntax_line("/settime <on_seconds> <off_seconds>", "/settime 300 1200"))
             ontime, offtime = int(parts[1]), int(parts[2])
             if ontime <= 0 or offtime <= 0:
                 return BotResponse(self._msg("❌ 两个时长都必须大于 0。", "❌ Both durations must be greater than 0."))
@@ -206,12 +209,7 @@ class BotMessageHandler:
         try:
             parts = content.split()
             if len(parts) != 2:
-                return BotResponse(
-                    self._msg(
-                        "📌 用法: /settemp <temperature>\n示例: /settemp 28.5",
-                        "📌 Usage: /settemp <temperature>\nExample: /settemp 28.5",
-                    )
-                )
+                return BotResponse(self._syntax_line("/settemp <temperature>", "/settemp 28.5"))
             temp = float(parts[1])
             if not (16.0 <= temp <= 35.0):
                 return BotResponse(self._msg("❌ 温度必须在 16 到 35 C 之间。", "❌ Temperature must be between 16 and 35 C."))
@@ -225,7 +223,7 @@ class BotMessageHandler:
         try:
             parts = content.split()
             if len(parts) != 2:
-                return BotResponse(self._msg("📌 用法: /setbasis <temperature|heatindex>", "📌 Usage: /setbasis <temperature|heatindex>"))
+                return BotResponse(self._syntax_line("/setbasis <temperature|heatindex>", "/setbasis temperature"))
             basis = parts[1].lower()
             basis_map = {
                 "t": "temperature",
@@ -253,12 +251,7 @@ class BotMessageHandler:
         try:
             parts = content.split()
             if len(parts) != 2:
-                return BotResponse(
-                    self._msg(
-                        "📌 用法: /setmode <mode>\n可选: temperature (t) 或 scheduler (s)",
-                        "📌 Usage: /setmode <mode>\nOptions: temperature (t) or scheduler (s)",
-                    )
-                )
+                return BotResponse(self._syntax_line("/setmode <temperature|scheduler>", "/setmode scheduler"))
             mode = parts[1].lower()
             if mode not in ("temperature", "t", "scheduler", "s"):
                 return BotResponse(self._msg("❌ 模式无效，可选 temperature (t) 或 scheduler (s)。", "❌ Invalid mode. Choose temperature (t) or scheduler (s)."))
@@ -350,7 +343,15 @@ class BotMessageHandler:
                         f"✅ Temporary lock configured\n🎯 Target state: {state}\n⌛ Duration: {self._fmt_duration(duration)}\n⏲️ Until: {end_time:%Y-%m-%d %H:%M:%S}",
                     )
                 )
-            return BotResponse(self._msg("📌 用法:\n/lock\n/lock <ON|OFF> <seconds>\n/lock clear", "📌 Usage:\n/lock\n/lock <ON|OFF> <seconds>\n/lock clear"))
+            return BotResponse(
+                "\n".join(
+                    [
+                        self._syntax_line("/lock"),
+                        self._syntax_line("/lock <ON|OFF> <seconds>", "/lock ON 1800"),
+                        self._syntax_line("/lock clear"),
+                    ]
+                )
+            )
         except Exception as exc:
             log.error(f"lock command failed: {exc}")
             return BotResponse(self._msg(f"❌ 处理锁定指令失败：{exc}", f"❌ Failed to process lock command: {exc}"))
@@ -433,19 +434,22 @@ class BotMessageHandler:
         except Exception as exc:
             log.error(f"stats command failed: {exc}")
             return BotResponse(
-                self._msg(
-                    f"❌ 获取统计失败：{exc}\n📌 用法: /stats <1h|2h|6h|12h|24h|3d|7d|30d>",
-                    f"❌ Failed to build stats: {exc}\n📌 Usage: /stats <1h|2h|6h|12h|24h|3d|7d|30d>",
-                )
+                f"{self._msg(f'❌ 获取统计失败：{exc}', f'❌ Failed to build stats: {exc}')}\n"
+                f"{self._syntax_line('/stats <range>', '/stats 24h')}"
             )
 
     def _handle_plot_command(self, content: str) -> BotResponse:
         parts = content.split(maxsplit=1)
         if len(parts) != 2:
             return BotResponse(
-                self._msg(
-                    "📌 用法: /plot <1h|2h|6h|12h|24h|3d|7d|30d>\n或: /plot <YYYY-MM-DD HH:MM, YYYY-MM-DD HH:MM>",
-                    "📌 Usage: /plot <1h|2h|6h|12h|24h|3d|7d|30d>\nOr: /plot <YYYY-MM-DD HH:MM, YYYY-MM-DD HH:MM>",
+                "\n".join(
+                    [
+                        self._syntax_line("/plot <range>", "/plot 6h"),
+                        self._syntax_line(
+                            "/plot <YYYY-MM-DD HH:MM, YYYY-MM-DD HH:MM>",
+                            "/plot 2026-03-16 00:00, 2026-03-16 12:00",
+                        ),
+                    ]
                 )
             )
         try:
@@ -470,22 +474,26 @@ class BotMessageHandler:
                 [
                     self._msg("🤖 空调控制机器人", "🤖 AC Controller Bot"),
                     self._msg("📎 信息类指令", "📎 Information Commands"),
-                    "/state  查看当前系统状态 | Show current system status",
-                    "/scheduler  查看定时模式详情 | Show scheduler details",
-                    "/timer  查看设备关机定时 | Show the device off-timer",
-                    "/lock  查看临时锁定状态 | Show temporary lock status",
-                    "/log  查看最近日志 | Show recent logs",
-                    "/stats <24h>  查看某段时间统计 | Show statistical summary for a range",
-                    "/plot <6h>  生成数据图像 | Generate a data figure",
+                    self._msg("/state  查看当前系统状态", "/state  Show current system status"),
+                    self._msg("/scheduler  查看定时模式详情", "/scheduler  Show scheduler details"),
+                    self._msg("/timer  查看设备关机定时", "/timer  Show the device off-timer"),
+                    self._msg("/lock  查看临时锁定状态", "/lock  Show temporary lock status"),
+                    self._msg("/log  查看最近日志", "/log  Show recent logs"),
+                    self._msg("/stats <range>  查看某段时间统计 | eg: /stats 24h", "/stats <range>  Show statistical summary for a range | eg: /stats 24h"),
+                    self._msg("/plot <range>  生成数据图像 | eg: /plot 6h", "/plot <range>  Generate a data figure | eg: /plot 6h"),
+                    self._msg(
+                        "/plot <YYYY-MM-DD HH:MM, YYYY-MM-DD HH:MM>  按绝对时间范围生成图像 | eg: /plot 2026-03-16 00:00, 2026-03-16 12:00",
+                        "/plot <YYYY-MM-DD HH:MM, YYYY-MM-DD HH:MM>  Generate a figure for an absolute time range | eg: /plot 2026-03-16 00:00, 2026-03-16 12:00",
+                    ),
                     "",
                     self._msg("🛠️ 控制类指令", "🛠️ Control Commands"),
-                    "/settemp <temp>  设置目标温度 | Set the target temperature",
-                    "/setbasis <temperature|heatindex>  设置温控依据 | Set the control basis",
-                    "/settime <on_s> <off_s>  设置定时周期 | Configure the scheduler cycle",
-                    "/setmode <t|s>  切换控制模式 | Switch control mode",
-                    "/lock <ON|OFF> <sec>  设置临时锁定 | Set a temporary lock",
-                    "/lock clear  清除临时锁定 | Clear the temporary lock",
-                    "/switchOn / /switchOff  打开或关闭总开关 | Turn master switch on or off",
+                    self._msg("/settemp <temperature>  设置目标温度 | eg: /settemp 28.5", "/settemp <temperature>  Set the target temperature | eg: /settemp 28.5"),
+                    self._msg("/setbasis <temperature|heatindex>  设置温控依据 | eg: /setbasis temperature", "/setbasis <temperature|heatindex>  Set the control basis | eg: /setbasis temperature"),
+                    self._msg("/settime <on_seconds> <off_seconds>  设置定时周期 | eg: /settime 300 1200", "/settime <on_seconds> <off_seconds>  Configure the scheduler cycle | eg: /settime 300 1200"),
+                    self._msg("/setmode <temperature|scheduler>  切换控制模式 | eg: /setmode scheduler", "/setmode <temperature|scheduler>  Switch control mode | eg: /setmode scheduler"),
+                    self._msg("/lock <ON|OFF> <seconds>  设置临时锁定 | eg: /lock ON 1800", "/lock <ON|OFF> <seconds>  Set a temporary lock | eg: /lock ON 1800"),
+                    self._msg("/lock clear  清除临时锁定", "/lock clear  Clear the temporary lock"),
+                    self._msg("/switchOn / /switchOff  打开或关闭总开关", "/switchOn / /switchOff  Turn master switch on or off"),
                 ]
             )
         )
