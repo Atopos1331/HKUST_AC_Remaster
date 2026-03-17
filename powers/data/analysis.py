@@ -37,6 +37,9 @@ METRIC_SPECS: Dict[str, MetricSpec] = {
 }
 
 
+POWER_ON_THRESHOLD_W = 20.0
+
+
 DEFAULT_METRICS = [
     "temperature",
     "heat_index_c",
@@ -170,6 +173,7 @@ class ACDataAnalyzer:
                 "outdoor_humidity",
                 "ac_on",
                 "ac_power_w",
+                "balance_min",
             ],
         )
         analysis: Dict[str, Any] = {
@@ -185,8 +189,8 @@ class ACDataAnalyzer:
         }
 
         ac_on_data = data.get("ac_on", [])
-        if ac_on_data:
-            on_periods = extract_on_periods(ac_on_data, end_time=end_time)
+        on_periods = infer_on_periods(data, end_time=end_time)
+        if on_periods:
             total_runtime = sum((end - start).total_seconds() for start, end in on_periods)
             analysis["total_runtime_hours"] = total_runtime / 3600
             analysis["cooling_cycles"] = len(on_periods)
@@ -215,8 +219,7 @@ class ACDataAnalyzer:
             "ac_on",
         ]
         data = self.get_data(start_time, end_time, metrics)
-        ac_on_data = data.get("ac_on", [])
-        on_periods = extract_on_periods(ac_on_data, end_time=end_time) if ac_on_data else []
+        on_periods = infer_on_periods(data, end_time=end_time)
         total_runtime_seconds = sum((end - start).total_seconds() for start, end in on_periods)
         return {
             "start_time": start_time,
@@ -420,7 +423,7 @@ class PlotExporter:
     """Render grouped plots to image files."""
 
     def __init__(self) -> None:
-        self.fig = Figure(figsize=(18.5, 13.5), dpi=120, facecolor="#FCFCFD")
+        self.fig = Figure(figsize=(32.5, 13.5), dpi=120, facecolor="#FCFCFD")
 
     def export_grouped_metrics(
         self,
@@ -437,7 +440,7 @@ class PlotExporter:
 
         axes = self.fig.subplots(2, 2, sharex=False)
         flat_axes = list(axes.flatten())
-        on_periods = extract_on_periods(active_data.get("ac_on", []))
+        on_periods = infer_on_periods(active_data)
         gap_windows = self._build_global_gap_windows(list(plotted_metrics.values()))
 
         for axis, (group_title, metrics) in zip(flat_axes, PLOT_GROUPS):
@@ -474,7 +477,7 @@ class PlotExporter:
                     values,
                     label=spec.label,
                     color=spec.color,
-                    linewidth=2.4,
+                    linewidth=1.9,
                     alpha=0.96,
                 )[0]
                 for bridge_start, bridge_end, bridge_start_value, bridge_end_value in bridge_segments:
@@ -482,7 +485,7 @@ class PlotExporter:
                         [bridge_start, bridge_end],
                         [bridge_start_value, bridge_end_value],
                         color="#94A3B8",
-                        linewidth=1.8,
+                        linewidth=1.4,
                         linestyle="--",
                         alpha=0.95,
                         zorder=line.get_zorder() - 0.1,
@@ -524,7 +527,7 @@ class PlotExporter:
             axis.margins(x=0.02)
 
         self.fig.suptitle(title, fontsize=18, fontweight="bold", color="#0F172A", y=0.985)
-        self.fig.subplots_adjust(left=0.055, right=0.72, top=0.915, bottom=0.055, hspace=0.94, wspace=0.72)
+        self.fig.subplots_adjust(left=0.045, right=0.77, top=0.915, bottom=0.02, hspace=0.7, wspace=0.42)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self.fig.savefig(output_path, dpi=180, bbox_inches="tight", facecolor=self.fig.get_facecolor())
         return output_path
@@ -653,6 +656,61 @@ def extract_on_periods(
         if closing_time is not None:
             on_periods.append((last_on_time, closing_time))
     return on_periods
+
+
+def infer_on_periods(
+    data: Dict[str, List[Tuple[datetime, float]]],
+    end_time: Optional[datetime] = None,
+) -> List[Tuple[datetime, datetime]]:
+    power_samples = data.get("ac_power_w", [])
+    if power_samples:
+        power_state_samples = [(ts, 1.0 if value > POWER_ON_THRESHOLD_W else 0.0) for ts, value in power_samples]
+        power_periods = extract_on_periods(power_state_samples, end_time=end_time)
+        if power_periods:
+            balance_periods = extract_balance_drop_periods(data.get("balance_min", []))
+            return merge_periods([*power_periods, *balance_periods])
+
+    balance_periods = extract_balance_drop_periods(data.get("balance_min", []))
+    if balance_periods:
+        return balance_periods
+
+    return extract_on_periods(data.get("ac_on", []), end_time=end_time)
+
+
+def extract_balance_drop_periods(
+    balance_samples: List[Tuple[datetime, float]],
+) -> List[Tuple[datetime, datetime]]:
+    if len(balance_samples) < 2:
+        return []
+
+    periods: List[Tuple[datetime, datetime]] = []
+    previous_ts, previous_balance = balance_samples[0]
+    for ts, balance in balance_samples[1:]:
+        if balance < previous_balance:
+            periods.append((previous_ts, ts))
+        previous_ts, previous_balance = ts, balance
+    return merge_periods(periods)
+
+
+def merge_periods(
+    periods: List[Tuple[datetime, datetime]],
+    max_gap: timedelta = timedelta(seconds=90),
+) -> List[Tuple[datetime, datetime]]:
+    normalized = sorted((start, end) for start, end in periods if start < end)
+    if not normalized:
+        return []
+
+    merged: List[Tuple[datetime, datetime]] = []
+    current_start, current_end = normalized[0]
+    for start, end in normalized[1:]:
+        if start <= current_end + max_gap:
+            if end > current_end:
+                current_end = end
+            continue
+        merged.append((current_start, current_end))
+        current_start, current_end = start, end
+    merged.append((current_start, current_end))
+    return merged
 
 
 def build_figure_path(end_time: datetime, stem: str = "ac_timeline") -> Path:
