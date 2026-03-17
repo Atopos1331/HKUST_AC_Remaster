@@ -144,6 +144,7 @@ class DiscordBot:
                     exec(source, namespace)
                     callback = namespace["_callback"]
                     callback.__name__ = f"command_{spec.name}"
+                    callback.__qualname__ = callback.__name__
 
                     if spec.options:
                         callback = app_commands.describe(
