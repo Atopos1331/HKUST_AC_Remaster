@@ -125,11 +125,7 @@ class DiscordBot:
                         parameters.append(f"{option.name}: {annotation}{default}")
                         value_expr = f"{option.name}.value" if option.choices else option.name
                         body_lines.append(f"args[{option.name!r}] = {value_expr}")
-                    body_lines.append(
-                        "response = self.bot_instance.message_handler.deal_message("
-                        "spec.build_message(args), source='discord-slash')"
-                    )
-                    body_lines.append("await self._respond(interaction, response)")
+                    body_lines.append("await self._handle_slash_command(interaction, spec.build_message(args))")
 
                     source = "async def _callback(" + ", ".join(parameters) + "):\n"
                     for line in body_lines:
@@ -161,6 +157,20 @@ class DiscordBot:
                                 }
                             )(callback)
                     return callback
+
+                async def _handle_slash_command(self, interaction: discord.Interaction, command_text: str) -> None:
+                    if not interaction.response.is_done():
+                        await interaction.response.defer(thinking=True)
+                    try:
+                        response = await asyncio.to_thread(
+                            self.bot_instance.message_handler.deal_message,
+                            command_text,
+                            "discord-slash",
+                        )
+                    except Exception as exc:
+                        log.error(f"Failed to handle Discord slash command {command_text}: {type(exc).__name__}: {exc}")
+                        response = BotResponse(f"Failed to process command: {exc}")
+                    await self._send_response_to_followup(interaction, response)
 
                 async def _respond(self, interaction: discord.Interaction, response: BotResponse) -> None:
                     if interaction.response.is_done():
